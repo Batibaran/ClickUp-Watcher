@@ -1,7 +1,7 @@
 import requests
 import time
 import random
-
+from datetime import datetime  # for printing current time
 
 # CONFIGURATION
 # ----------------------------------------------------------------------------
@@ -18,7 +18,7 @@ MIN_WAIT = 1
 MAX_WAIT = 10
 
 # How often (in seconds) the script should poll for new tasks
-POLL_INTERVAL = 60
+POLL_INTERVAL = 60  # 1 minute
 
 # The exact status strings in your ClickUp workflow
 STATUS_TO_FIND = "to be reviewed"
@@ -77,31 +77,46 @@ def update_task_status(task_id, new_status):
 def main():
     """
     Main loop that:
-      1) Polls for tasks in 'to be reviewed' status,
-      2) For each found task, waits 1-10 minutes, then
-      3) Updates the task to 'acknowledged'.
+      1) Polls for tasks in 'to be reviewed' status.
+      2) For each found task not in our 'acknowledgment queue', schedule an update time
+         (current time + random(1-15) minutes).
+      3) Checks the queue for tasks whose scheduled time has come, then updates them.
+      4) Sleeps for the poll interval before checking again.
     """
     print("Starting ClickUp Task Watcher...")
 
+    # Dictionary to track tasks that need to be acknowledged.
+    acknowledgment_queue = {}
+
     while True:
-        print(f"\nPolling for tasks with status '{STATUS_TO_FIND}'...")
+        now = datetime.now().strftime("%H:%M:%S")
+        print(f"\n[{now}] Polling for tasks with status '{STATUS_TO_FIND}'...")
 
         tasks_in_review = get_tasks_in_review(LIST_ID)
 
-        if not tasks_in_review:
-            print(f"No tasks in '{STATUS_TO_FIND}' status found.")
-        else:
-            for task in tasks_in_review:
-                task_id = task["id"]
-
+        # Add new tasks to the queue if they're not already in it
+        for task in tasks_in_review:
+            task_id = task["id"]
+            if task_id not in acknowledgment_queue:
                 wait_minutes = random.randint(MIN_WAIT, MAX_WAIT)
-                print(f"Found task: {task_id}. Waiting {wait_minutes} minute(s) before updating.")
+                scheduled_time = time.time() + (wait_minutes * 60)
+                acknowledgment_queue[task_id] = scheduled_time
+                print(f"  Found task {task_id}. Scheduled to acknowledge in {wait_minutes} minute(s).")
 
-                time.sleep(wait_minutes * 60)
-
+        # Check which tasks are ready to be acknowledged
+        tasks_to_remove = []
+        current_time = time.time()
+        for task_id, scheduled_time in acknowledgment_queue.items():
+            if current_time >= scheduled_time:
                 update_task_status(task_id, STATUS_TO_SET)
+                tasks_to_remove.append(task_id)
 
-        print(f"Sleeping {POLL_INTERVAL} second(s) before next check...")
+        # Remove acknowledged tasks from the queue
+        for task_id in tasks_to_remove:
+            del acknowledgment_queue[task_id]
+
+        # Sleep for the poll interval before checking again
+        print(f"Sleeping {POLL_INTERVAL} second(s) before next poll...")
         time.sleep(POLL_INTERVAL)
 
 
